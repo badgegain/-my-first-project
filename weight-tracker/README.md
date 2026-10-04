@@ -19,17 +19,16 @@ An APK only installs on Android. iPhones can't install APKs. This is a web app (
 
 ## Install on iPhone
 
-1. **Put the app online once (free, with GitHub Pages):**
-   1. On GitHub, open this repository, then go to **Settings → Pages**.
-   2. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
-   3. Pick the branch that has this folder (`claude/weight-tracker-app-lu5wzm`, or `main` once it's merged) and the folder **/ (root)**, then press **Save**.
-   4. After a minute or two the app is live at
-      **https://badgegain.github.io/-my-first-project/weight-tracker/**
-2. **On your iPhone**, open that link in **Safari** (not Chrome).
-3. Tap the **Share** button, then **Add to Home Screen**, then **Add**.
-4. Always open the app from the new **Weight** icon on your Home Screen.
+The app is hosted with GitHub Pages at
+**https://rajeevrj256.github.io/-my-first-project/weight-tracker/**
+
+1. On your iPhone, open that link in **Safari** (not Chrome).
+2. Tap the **Share** button, then **Add to Home Screen**, then **Add**.
+3. Always open the app from the new **Weight** icon on your Home Screen.
 
 > iOS keeps the Home Screen app's data separate from Safari's data, so enter your weights in the installed app, not in the Safari tab.
+
+If the link doesn't load, check **Settings → Pages** in the repository: **Source** should be **Deploy from a branch** with the default branch and **/ (root)** selected.
 
 ## Files
 
