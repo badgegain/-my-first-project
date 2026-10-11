@@ -1,14 +1,20 @@
 'use strict';
 
-// Entries are stored on this device only, in localStorage, as a compact
-// JSON array of [timestampMs, weightKg] pairs (about 22 bytes per entry).
+// Entries are stored on this device only, in localStorage, as a compact JSON array of
+// [timestampMs, weightKg] or [timestampMs, weightKg|null, bellyCm] (about 22-30 bytes each).
 const STORE_KEY = 'weightTracker.entries.v1';
 const RANGE_KEY = 'weightTracker.range';
 const HINT_KEY = 'weightTracker.hintDismissed';
 const THEME_KEY = 'weightTracker.theme';
+const WAIST_UNIT_KEY = 'weightTracker.waistUnit';
 const DAY = 864e5;
 const MIN_KG = 10;
 const MAX_KG = 500;
+const MIN_CM = 30;
+const MAX_CM = 250;
+const CM_PER_IN = 2.54;
+const WEIGHT = 1;
+const WAIST = 2;
 const HISTORY_PAGE = 10;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -25,6 +31,7 @@ const fmt = {
 
 let entries = loadEntries();
 let rangeDays = loadRange();
+let waistUnit = readStore(WAIST_UNIT_KEY) === 'in' ? 'in' : 'cm';
 let historyLimit = HISTORY_PAGE;
 
 /* ---------- storage ---------- */
@@ -37,8 +44,29 @@ function writeStore(key, value) {
   try { localStorage.setItem(key, value); return true; } catch { return false; }
 }
 
+function validKg(w) {
+  return Number.isFinite(w) && w >= MIN_KG && w <= MAX_KG;
+}
+
+function validCm(c) {
+  return Number.isFinite(c) && c >= MIN_CM && c <= MAX_CM;
+}
+
+// Each entry has a weight, a belly size or both; a missing value is null or absent.
 function isValidEntry(e) {
-  return Array.isArray(e) && Number.isFinite(e[0]) && Number.isFinite(e[1]) && e[1] >= MIN_KG && e[1] <= MAX_KG;
+  if (!Array.isArray(e) || !Number.isFinite(e[0])) return false;
+  const w = e[WEIGHT] ?? null;
+  const c = e[WAIST] ?? null;
+  return (w !== null || c !== null) && (w === null || validKg(w)) && (c === null || validCm(c));
+}
+
+function makeEntry(t, w, c) {
+  return c === null ? [t, w] : [t, w, c];
+}
+
+// Entries that have a value at `field` (WEIGHT or WAIST), oldest first.
+function entriesWith(field) {
+  return entries.filter((e) => e[field] != null);
 }
 
 function loadEntries() {
@@ -96,15 +124,19 @@ function signed(diff) {
   return (r > 0 ? '+' : '−') + Math.abs(r).toFixed(1);
 }
 
+// Belly size is stored in cm and shown in the unit picked in the form.
+const waistShown = (cm) => (waistUnit === 'in' ? cm / CM_PER_IN : cm);
+const fmtWaist = (cm) => `${waistShown(cm).toFixed(1)} ${waistUnit}`;
+
 /* ---------- series ---------- */
 
-// One point per calendar day; several entries on the same day are averaged.
-function dailySeries() {
+// One point per calendar day for `field`; several entries on the same day are averaged.
+function dailySeries(field) {
   const days = new Map();
-  for (const [t, w] of entries) {
-    const x = noonOf(t);
+  for (const e of entriesWith(field)) {
+    const x = noonOf(e[0]);
     const g = days.get(x) || { x, sum: 0, n: 0 };
-    g.sum += w;
+    g.sum += e[field];
     g.n += 1;
     days.set(x, g);
   }
@@ -154,7 +186,7 @@ function niceTicks(min, max) {
   return { ticks, lo, hi, decimals: step < 1 ? 1 : 0 };
 }
 
-function renderChart(box, points, { label, describe, emptyText }) {
+function renderChart(box, points, { label, describe, emptyText, unit = 'kg' }) {
   box.replaceChildren();
   box._hide = null;
   if (!points.length) {
@@ -250,7 +282,7 @@ function renderChart(box, points, { label, describe, emptyText }) {
     focusDot.setAttribute('cx', cx);
     focusDot.setAttribute('cy', cy);
     focusDot.setAttribute('visibility', 'visible');
-    tipValue.textContent = `${fmt.weight(p.y)} kg`;
+    tipValue.textContent = `${fmt.weight(p.y)} ${unit}`;
     tipLabel.textContent = describe(p);
     tip.hidden = false;
     const tw = tip.offsetWidth;
@@ -284,7 +316,7 @@ function renderChart(box, points, { label, describe, emptyText }) {
   box._hide = hide;
   box.tabIndex = 0;
   box.setAttribute('aria-label',
-    `${label}: ${points.length} point${points.length > 1 ? 's' : ''}, latest ${fmt.weight(last.y)} kg. Use left and right arrow keys to read values.`);
+    `${label}: ${points.length} point${points.length > 1 ? 's' : ''}, latest ${fmt.weight(last.y)} ${unit}. Use left and right arrow keys to read values.`);
   box.onkeydown = (e) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
@@ -301,23 +333,44 @@ function renderChart(box, points, { label, describe, emptyText }) {
 /* ---------- views ---------- */
 
 function renderHero() {
-  if (!entries.length) {
+  const weighed = entriesWith(WEIGHT);
+  if (!weighed.length) {
     $('latestVal').textContent = '–';
-    $('latestSub').textContent = 'No entries yet. Add your first weight below.';
-    return;
+    $('latestSub').textContent = entries.length ? 'No weight saved yet.' : 'No entries yet. Add your first weight below.';
+  } else {
+    const [t, w] = weighed[weighed.length - 1];
+    let sub = `${fmt.day.format(t)}, ${fmt.time.format(t)}`;
+    if (weighed.length > 1) sub += ` · ${signed(w - weighed[weighed.length - 2][WEIGHT])} kg vs previous`;
+    $('latestVal').textContent = fmt.weight(w);
+    $('latestSub').textContent = sub;
   }
-  const [t, w] = entries[entries.length - 1];
-  let sub = `${fmt.day.format(t)}, ${fmt.time.format(t)}`;
-  if (entries.length > 1) sub += ` · ${signed(w - entries[entries.length - 2][1])} kg vs previous`;
-  $('latestVal').textContent = fmt.weight(w);
-  $('latestSub').textContent = sub;
+
+  const measured = entriesWith(WAIST);
+  $('waistLatest').hidden = !measured.length;
+  if (measured.length) {
+    const last = measured[measured.length - 1];
+    let sub = fmt.dayShort.format(last[0]);
+    if (measured.length > 1) {
+      sub += ` · ${signed(waistShown(last[WAIST]) - waistShown(measured[measured.length - 2][WAIST]))} ${waistUnit} vs previous`;
+    }
+    $('waistVal').textContent = fmtWaist(last[WAIST]);
+    $('waistSub').textContent = sub;
+  }
+}
+
+function renderUnits() {
+  document.querySelectorAll('.waist-unit').forEach((el) => { el.textContent = waistUnit; });
+  document.querySelectorAll('.unit-toggle button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.unit === waistUnit));
+  });
+  $('waistIn').placeholder = waistUnit === 'in' ? 'e.g. 34.5' : 'e.g. 88';
 }
 
 function renderCharts() {
   const from = rangeStart();
-  const daily = dailySeries();
+  const daily = dailySeries(WEIGHT);
   const weekly = weeklySeries(daily);
-  const empty = entries.length ? 'No entries in this range' : 'Your graph appears after the first entry';
+  const empty = daily.length ? 'No entries in this range' : 'Your graph appears after the first weight';
 
   renderChart($('dailyChart'), daily.filter((p) => p.x >= from), {
     label: 'Daily weight chart',
@@ -331,6 +384,14 @@ function renderCharts() {
     label: 'Weekly average chart',
     describe: (p) => `Week of ${fmt.dayShort.format(p.x)} · ${p.n} day${p.n > 1 ? 's' : ''}`,
     emptyText: empty,
+  });
+
+  const waistDays = dailySeries(WAIST);
+  renderChart($('waistChart'), waistDays.filter((p) => p.x >= from).map((p) => ({ ...p, y: waistShown(p.y) })), {
+    label: 'Belly size chart',
+    unit: waistUnit,
+    describe: (p) => fmt.day.format(p.x) + (p.n > 1 ? ` · avg of ${p.n} entries` : ''),
+    emptyText: waistDays.length ? 'No belly sizes in this range' : 'Add a belly size to see this graph',
   });
 
   const body = $('weeklyTable');
@@ -362,19 +423,19 @@ function renderHistory() {
   }
   const newestFirst = entries.slice().reverse();
   for (const entry of newestFirst.slice(0, historyLimit)) {
-    const [t, w] = entry;
+    const t = entry[0];
     const li = document.createElement('li');
     const when = document.createElement('span');
     when.className = 'when';
     when.textContent = `${fmt.day.format(t)}, ${fmt.time.format(t)}`;
     const weight = document.createElement('span');
     weight.className = 'w';
-    weight.textContent = `${fmt.weight(w)} kg`;
+    weight.textContent = describeEntry(entry);
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'del';
     del.textContent = '×';
-    del.setAttribute('aria-label', `Delete ${fmt.weight(w)} kg on ${when.textContent}`);
+    del.setAttribute('aria-label', `Delete ${describeEntry(entry)} on ${when.textContent}`);
     del.addEventListener('click', () => deleteEntry(entry, when.textContent));
     li.append(when, weight, del);
     list.appendChild(li);
@@ -393,6 +454,7 @@ function renderStorageInfo() {
 }
 
 function renderAll() {
+  renderUnits();
   renderHero();
   renderCharts();
   renderHistory();
@@ -408,13 +470,40 @@ function say(el, text, isError = false) {
 
 /* ---------- actions ---------- */
 
+// "72,4" and "72.4" both work; an empty field is null.
+function readNumber(input) {
+  const v = input.value.trim().replace(',', '.');
+  return v === '' ? null : parseFloat(v);
+}
+
+function describeEntry(e) {
+  const parts = [];
+  if (e[WEIGHT] != null) parts.push(`${fmt.weight(e[WEIGHT])} kg`);
+  if (e[WAIST] != null) parts.push(`belly ${fmtWaist(e[WAIST])}`);
+  return parts.join(' · ');
+}
+
 function addEntry(e) {
   e.preventDefault();
   const msg = $('formMsg');
-  const w = parseFloat($('weightIn').value.trim().replace(',', '.'));
-  if (!(w >= MIN_KG && w <= MAX_KG)) {
+  const w = readNumber($('weightIn'));
+  const typedWaist = readNumber($('waistIn'));
+  if (w === null && typedWaist === null) {
+    say(msg, 'Enter a weight, a belly size or both.', true);
+    $('weightIn').focus();
+    return;
+  }
+  if (w !== null && !validKg(w)) {
     say(msg, `Enter a weight between ${MIN_KG} and ${MAX_KG} kg.`, true);
     $('weightIn').focus();
+    return;
+  }
+  const c = typedWaist === null ? null : round1(waistUnit === 'in' ? typedWaist * CM_PER_IN : typedWaist);
+  if (c !== null && !validCm(c)) {
+    say(msg, waistUnit === 'in'
+      ? `Enter a belly size between ${Math.ceil(MIN_CM / CM_PER_IN)} and ${Math.floor(MAX_CM / CM_PER_IN)} in.`
+      : `Enter a belly size between ${MIN_CM} and ${MAX_CM} cm.`, true);
+    $('waistIn').focus();
     return;
   }
   const t = parseLocalInputValue($('whenIn').value);
@@ -426,7 +515,7 @@ function addEntry(e) {
     say(msg, 'That date is in the future.', true);
     return;
   }
-  const entry = [t, round1(w)];
+  const entry = makeEntry(t, w === null ? null : round1(w), c);
   entries.push(entry);
   entries.sort((a, b) => a[0] - b[0]);
   if (!saveEntries()) {
@@ -436,14 +525,15 @@ function addEntry(e) {
   }
   requestPersistence();
   $('weightIn').value = '';
-  $('weightIn').blur();
+  $('waistIn').value = '';
+  document.activeElement.blur();
   $('whenIn').value = toLocalInputValue(new Date());
-  say(msg, `Saved ${fmt.weight(entry[1])} kg.`);
+  say(msg, `Saved ${describeEntry(entry)}.`);
   renderAll();
 }
 
 function deleteEntry(entry, whenText) {
-  if (!confirm(`Delete ${fmt.weight(entry[1])} kg from ${whenText}?`)) return;
+  if (!confirm(`Delete ${describeEntry(entry)} from ${whenText}?`)) return;
   const i = entries.indexOf(entry);
   if (i < 0) return;
   entries.splice(i, 1);
@@ -456,10 +546,11 @@ function deleteEntry(entry, whenText) {
 }
 
 function toCSV() {
-  const lines = ['datetime,weight_kg'];
-  for (const [t, w] of entries) {
-    const d = new Date(t);
-    lines.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())},${w}`);
+  const lines = ['datetime,weight_kg,waist_cm'];
+  for (const e of entries) {
+    const d = new Date(e[0]);
+    const when = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    lines.push(`${when},${e[WEIGHT] ?? ''},${e[WAIST] ?? ''}`);
   }
   return lines.join('\n') + '\n';
 }
@@ -502,16 +593,21 @@ async function importCSV(e) {
   let text;
   try { text = await file.text(); } catch { say(msg, 'Could not read that file.', true); return; }
 
-  const seen = new Set(entries.map(([t, w]) => `${t}|${w}`));
+  const keyOf = (e) => `${e[0]}|${e[WEIGHT] ?? ''}|${e[WAIST] ?? ''}`;
+  const seen = new Set(entries.map(keyOf));
   let added = 0;
   let skipped = 0;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || /^datetime/i.test(line)) continue;
-    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::\d{2})?\s*,\s*(\d+(?:\.\d+)?)$/.exec(line);
-    const entry = m && [new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]).getTime(), round1(+m[6])];
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::\d{2})?\s*,\s*(\d+(?:\.\d+)?)?\s*(?:,\s*(\d+(?:\.\d+)?)?\s*)?$/.exec(line);
+    const entry = m && makeEntry(
+      new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]).getTime(),
+      m[6] ? round1(+m[6]) : null,
+      m[7] ? round1(+m[7]) : null,
+    );
     if (!entry || !isValidEntry(entry)) { skipped++; continue; }
-    const key = `${entry[0]}|${entry[1]}`;
+    const key = keyOf(entry);
     if (seen.has(key)) continue;
     seen.add(key);
     entries.push(entry);
@@ -577,6 +673,15 @@ $('addForm').addEventListener('submit', addEntry);
 $('whenIn').value = toLocalInputValue(new Date());
 
 $('themeBtn').addEventListener('click', toggleTheme);
+
+// Switching cm/in keeps the number already typed; it's read in the newly picked unit.
+document.querySelector('.unit-toggle').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-unit]');
+  if (!b || b.dataset.unit === waistUnit) return;
+  waistUnit = b.dataset.unit;
+  writeStore(WAIST_UNIT_KEY, waistUnit);
+  renderAll();
+});
 if (systemDark.addEventListener) systemDark.addEventListener('change', applyTheme);
 else systemDark.addListener(applyTheme);
 
@@ -605,7 +710,7 @@ document.addEventListener('pointerdown', (e) => {
 
 // Keep the default time current when the app comes back from the background.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !$('weightIn').value) {
+  if (document.visibilityState === 'visible' && !$('weightIn').value && !$('waistIn').value) {
     $('whenIn').value = toLocalInputValue(new Date());
   }
 });

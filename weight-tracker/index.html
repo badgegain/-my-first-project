@@ -48,14 +48,31 @@
       <div class="hero-label" id="latestLabel">Latest</div>
       <div class="hero-value"><span id="latestVal">&ndash;</span> <span class="hero-unit">kg</span></div>
       <div class="hero-sub" id="latestSub">No entries yet</div>
+      <div class="hero-extra" id="waistLatest" hidden>
+        <span class="hero-label">Belly</span>
+        <span class="extra-value" id="waistVal"></span>
+        <span class="hero-sub" id="waistSub"></span>
+      </div>
     </section>
 
     <form class="card" id="addForm" novalidate>
-      <h2>Add weight</h2>
+      <h2>Add entry</h2>
+      <p class="sub">Fill in weight, belly size or both.</p>
       <label class="field">
         <span>Weight (kg)</span>
         <input id="weightIn" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 72.4">
       </label>
+      <div class="field">
+        <div class="field-head">
+          <label for="waistIn">Belly size (<span class="waist-unit">cm</span>)</label>
+          <div class="unit-toggle" role="group" aria-label="Belly size unit">
+            <button type="button" data-unit="cm">cm</button>
+            <button type="button" data-unit="in">in</button>
+          </div>
+        </div>
+        <input id="waistIn" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 88">
+        <p class="field-help">Measure around your belly button with a tape, standing relaxed, breathing out.</p>
+      </div>
       <label class="field">
         <span>Date &amp; time</span>
         <input id="whenIn" type="datetime-local">
@@ -90,6 +107,12 @@
             <tbody id="weeklyTable"></tbody>
           </table>
         </details>
+      </div>
+
+      <div class="card">
+        <h2>Belly size (<span class="waist-unit">cm</span>)</h2>
+        <p class="sub">Around the belly button, one point per day</p>
+        <div class="chart" id="waistChart"></div>
       </div>
     </section>
 
